@@ -2182,33 +2182,53 @@
 
         // ----- load media with optional subtitle support -----
         function loadStream(url, playlistIdx, scheduleIdx) {
-            if (hls) { hls.destroy(); hls = null; }
-            videoPlayer.pause();
-            videoPlayer.removeAttribute('src');
+            const video = document.getElementById('video-player');
+            
+            // Comprehensive Error Tracking
+            video.onerror = () => {
+                const err = video.error;
+                if (err) {
+                    console.error("HTML5 Video Error [" + err.code + "]: " + err.message);
+                }
+            };
 
-            const vttUrl = url.replace(/\.[^/.]+$/, '') + '.vtt';
-            let track = videoPlayer.querySelector('track');
-            if (!track) {
-                track = document.createElement('track');
-                track.kind = 'subtitles';
-                track.label = 'English';
-                track.srclang = 'en';
-                videoPlayer.appendChild(track);
-            }
-            track.src = vttUrl;
-
-            if (url.includes('.m3u8') && Hls.isSupported()) {
-                hls = new Hls({ maxMaxBufferLength: 30 });
+            // Route MP4 files to native playback; route .m3u8 to HLS.js
+            if (url.includes('.mp4')) {
+                if (window.hls) { 
+                    window.hls.destroy(); 
+                    window.hls = null;
+                }
+                video.src = url;
+                video.load();
+                video.play().then(() => { window.isPlaying = true; }).catch(e => console.error("Playback failed:", e));
+            } else if (url.includes('.m3u8') && Hls.isSupported()) {
+                if (window.hls) { window.hls.destroy(); }
+                const hls = new Hls();
+                window.hls = hls;
                 hls.loadSource(url);
-                hls.attachMedia(videoPlayer);
-            } else {
-                videoPlayer.src = url;
+                hls.attachMedia(video);
+
+                // HLS Specific Debugging
+                hls.on(Hls.Events.ERROR, (event, data) => {
+                    console.error("HLS Error: " + data.type + " - " + data.details);
+                    if (data.fatal) {
+                        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
+                        else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+                        else hls.destroy();
+                    }
+                });
+                video.play().then(() => { window.isPlaying = true; }).catch(e => console.error("Playback failed:", e));
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                // Fallback for native HLS (Safari)
+                video.src = url;
+                video.play().then(() => { window.isPlaying = true; }).catch(e => console.error("Playback failed:", e));
             }
-            videoPlayer.play().catch(e => console.warn("autoplay blocked", e));
-            currentScheduleIndex = scheduleIdx;
+
             activeCardId = scheduleIdx;
+            currentScheduleIndex = scheduleIdx;
             updateNowPlayingUI();
             renderVisibleItems();
+            
             if (!lowPowerMode && !audioContext && window.AudioContext) {
                 initAudioVisualizer();
             } else if (lowPowerMode && audioContext) {
