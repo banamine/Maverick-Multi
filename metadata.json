@@ -1,0 +1,6 @@
+{
+  "name": "Maverick Multi-Format Player",
+  "description": "A versatile media player built with React and TypeScript that supports various formats including MP4, MP3, HLS, and Radio streams. It features a large, genre-filterable library with virtual scrolling for performance, search functionality, and a classic keypad for track selection, all wrapped in a sleek, modern UI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
