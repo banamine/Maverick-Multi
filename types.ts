@@ -8,6 +8,7 @@ export interface MediaItem {
   genre: string;
   show?: string;
   subtitles?: string;
+  poster?: string;
 }
 
 export interface ChatMessage {

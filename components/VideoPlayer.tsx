@@ -18,6 +18,28 @@ const formatTime = (seconds: number): string => {
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 };
 
+function srtToVtt(srt: string): string {
+    return 'WEBVTT\n\n' + srt.replace(/\r+/g, '').replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, '$1.$2');
+}
+
+async function attachSubtitleTrack(video: HTMLVideoElement, subtitleUrl: string) {
+    try {
+        const res = await fetch(subtitleUrl);
+        const raw = await res.text();
+        const vtt = subtitleUrl.endsWith('.srt') ? srtToVtt(raw) : raw; // .sub needs a real MicroDVD parser — flag for follow-up
+        const blob = new Blob([vtt], { type: 'text/vtt' });
+        const track = document.createElement('track');
+        track.kind = 'subtitles';
+        track.label = 'English';
+        track.srclang = 'en';
+        track.src = URL.createObjectURL(blob);
+        track.default = true;
+        video.appendChild(track);
+    } catch (e) {
+        console.error("Failed to load subtitles:", e);
+    }
+}
+
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ mediaItem, isPlaying, onPlayPause, onEnded, onStatusChange }) => {
     const videoRef = useRef<HTMLVideoElement>(null);
     const hlsRef = useRef<any>(null);
@@ -128,6 +150,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ mediaItem, isPlaying, onPlayP
         if (hlsRef.current) {
             hlsRef.current.destroy();
             hlsRef.current = null;
+        }
+
+        // Clear existing tracks
+        Array.from(videoElement.querySelectorAll('track')).forEach(t => t.remove());
+
+        if (mediaItem.subtitles) {
+            attachSubtitleTrack(videoElement, mediaItem.subtitles);
         }
 
         const isHlsSource = mediaItem.type === 'hls' || mediaItem.src.includes('.m3u8');
@@ -249,7 +278,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ mediaItem, isPlaying, onPlayP
     
     return (
         <div ref={containerRef} onMouseMove={resetControlsTimer} onMouseLeave={hideControls} className="relative bg-black w-full aspect-video border border-border overflow-hidden">
-            <video ref={videoRef} className="w-full h-full" playsInline />
+            <video ref={videoRef} className="w-full h-full" playsInline poster={mediaItem.poster} />
             <div className={`custom-controls-overlay absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-4 transition-all duration-300 ${isControlsVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full pointer-events-none'}`}>
                 <div className="custom-progress-container w-full flex items-center gap-2 mb-2 group">
                     <div className="custom-time-display font-mono text-xs">{formatTime(currentTime)}</div>

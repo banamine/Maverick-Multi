@@ -4,7 +4,7 @@ export const deployDirectToGitHub = async (currentMedia: MediaItem[], githubToke
     // 1. Generate formatted JSON
     const formattedPlaylist = currentMedia.map(item => ({
         title: item.title || "Maverick Broadcast",
-        file: item.src,
+        file: item.src ? item.src.replace(/^http:\/\//i, 'https://') : '',
         duration: 1800 
     }));
 
@@ -17,7 +17,7 @@ export const deployDirectToGitHub = async (currentMedia: MediaItem[], githubToke
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>Librv Player – Responsive TV Player</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css">
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <style>
         /* ----- RESET ----- */
@@ -519,33 +519,53 @@ export const deployDirectToGitHub = async (currentMedia: MediaItem[], githubToke
 
         // ----- load media with optional subtitle support -----
         function loadStream(url, playlistIdx, scheduleIdx) {
-            if (hls) { hls.destroy(); hls = null; }
-            videoPlayer.pause();
-            videoPlayer.removeAttribute('src');
+            const video = document.getElementById('video-player');
+            
+            // Comprehensive Error Tracking
+            video.onerror = () => {
+                const err = video.error;
+                if (err) {
+                    console.error("HTML5 Video Error [" + err.code + "]: " + err.message);
+                }
+            };
 
-            const vttUrl = url.replace(/\\.[^/.]+$/, '') + '.vtt';
-            let track = videoPlayer.querySelector('track');
-            if (!track) {
-                track = document.createElement('track');
-                track.kind = 'subtitles';
-                track.label = 'English';
-                track.srclang = 'en';
-                videoPlayer.appendChild(track);
-            }
-            track.src = vttUrl;
-
-            if (url.includes('.m3u8') && Hls.isSupported()) {
-                hls = new Hls({ maxMaxBufferLength: 30 });
+            // Route MP4 files to native playback; route .m3u8 to HLS.js
+            if (url.includes('.mp4')) {
+                if (window.hls) { 
+                    window.hls.destroy(); 
+                    window.hls = null;
+                }
+                video.src = url;
+                video.load();
+                video.play().then(() => { window.isPlaying = true; }).catch(e => console.error("Playback failed:", e));
+            } else if (url.includes('.m3u8') && Hls.isSupported()) {
+                if (window.hls) { window.hls.destroy(); }
+                const hls = new Hls();
+                window.hls = hls;
                 hls.loadSource(url);
-                hls.attachMedia(videoPlayer);
-            } else {
-                videoPlayer.src = url;
+                hls.attachMedia(video);
+
+                // HLS Specific Debugging
+                hls.on(Hls.Events.ERROR, (event, data) => {
+                    console.error("HLS Error: " + data.type + " - " + data.details);
+                    if (data.fatal) {
+                        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
+                        else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+                        else hls.destroy();
+                    }
+                });
+                video.play().then(() => { window.isPlaying = true; }).catch(e => console.error("Playback failed:", e));
+            } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                // Fallback for native HLS (Safari)
+                video.src = url;
+                video.play().then(() => { window.isPlaying = true; }).catch(e => console.error("Playback failed:", e));
             }
-            videoPlayer.play().catch(e => console.warn("autoplay blocked", e));
-            currentScheduleIndex = scheduleIdx;
+
             activeCardId = scheduleIdx;
+            currentScheduleIndex = scheduleIdx;
             updateNowPlayingUI();
             renderVisibleItems();
+            
             if (!lowPowerMode && !audioContext && window.AudioContext) {
                 initAudioVisualizer();
             } else if (lowPowerMode && audioContext) {
@@ -656,7 +676,8 @@ export const deployDirectToGitHub = async (currentMedia: MediaItem[], githubToke
         const getResponse = await fetch(apiUrl, {
             headers: { 
                 'Authorization': `Bearer ${githubToken}`,
-                'Accept': 'application/vnd.github.v3+json'
+                'Accept': 'application/vnd.github.v3+json',
+                'X-GitHub-Api-Version': '2022-11-28'
             }
         });
 
@@ -670,7 +691,8 @@ export const deployDirectToGitHub = async (currentMedia: MediaItem[], githubToke
             headers: {
                 'Authorization': `Bearer ${githubToken}`,
                 'Content-Type': 'application/json',
-                'Accept': 'application/vnd.github.v3+json'
+                'Accept': 'application/vnd.github.v3+json',
+                'X-GitHub-Api-Version': '2022-11-28'
             },
             body: JSON.stringify({
                 message: "Automated 24/7 Channel Update via Maverick Player",
@@ -683,7 +705,11 @@ export const deployDirectToGitHub = async (currentMedia: MediaItem[], githubToke
             alert("Successfully deployed to GitHub! Pages will update in ~60 seconds.");
         } else {
             const errorData = await putResponse.json();
-            alert(`GitHub API Error: ${errorData.message}`);
+            if (errorData.message === "Resource not accessible by personal access token") {
+                alert("GitHub API Error: Your token does not have the correct permissions.\n\nIf using a Fine-Grained Token, ensure you granted access to the 'Maverick-Multi' repository and set 'Contents' permissions to 'Read and write'.\n\nIf using a Classic Token, ensure the 'repo' scope is checked.");
+            } else {
+                alert(`GitHub API Error: ${errorData.message}`);
+            }
         }
     } catch (error) {
         console.error("Deploy failed:", error);

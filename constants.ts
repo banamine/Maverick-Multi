@@ -377,31 +377,70 @@ mediaData.forEach(item => {
     }
 });
 
+function assertPlayableArchiveUrl(url: string) {
+    if (/archive\.org\/details\//.test(url)) {
+        throw new Error(`archive.org "details" page URL found where a direct file is required: ${url}`);
+    }
+}
+
+export function buildSafeArchiveUrl(rawUrl: string): string {
+    try {
+        const urlObject = new URL(rawUrl);
+        if (!urlObject.hostname.includes('archive.org')) return rawUrl;
+
+        assertPlayableArchiveUrl(rawUrl);
+
+        // Decode the ENTIRE pathname up front. This resolves any "%2F" that
+        // was baked into a segment (which really meant "folder boundary
+        // here") back into a literal "/", along with normal %20/%2C/etc.
+        const decodedPath = decodeURIComponent(urlObject.pathname);
+
+        // Re-split on the now-real slashes and re-encode each segment
+        // independently, so multi-level paths ("Season 1/Episode.mp4") end
+        // up with a literal "/" between segments and a correctly
+        // percent-encoded filename, instead of one segment with an escaped
+        // slash hidden in the middle of it.
+        urlObject.pathname = decodedPath
+            .split('/')
+            .map(segment => encodeURIComponent(segment))
+            .join('/');
+
+        return urlObject.toString();
+    } catch (e) {
+        if (e instanceof Error && e.message.includes("details")) throw e;
+        console.warn(`Could not parse URL, using original: ${rawUrl}`, e);
+        return rawUrl;
+    }
+}
+
+export interface ArchiveFile {
+    name: string;      // relative path within the item, e.g. "Season 1/Episode.mp4"
+    format: string;    // e.g. "h.264", "MPEG4", "SubRip", "512Kb MPEG4"
+    source: string;
+}
+
+export async function resolveArchiveItem(identifier: string) {
+    const res = await fetch(`https://archive.org/metadata/${identifier}`);
+    const data = await res.json();
+    const files: ArchiveFile[] = data.files ?? [];
+
+    const video = files.find(f => f.format === 'h.264') ?? files.find(f => f.name.endsWith('.mp4'));
+    const subtitle = files.find(f => f.format === 'SubRip') ?? files.find(f => f.name.endsWith('.srt') || f.name.endsWith('.sub'));
+    const thumb = files.find(f => f.name.endsWith('.jpg') || f.name.endsWith('.png'));
+
+    const base = `https://archive.org/download/${identifier}`;
+    return {
+        videoUrl: video ? `${base}/${video.name.split('/').map(encodeURIComponent).join('/')}` : null,
+        subtitleUrl: subtitle ? `${base}/${subtitle.name.split('/').map(encodeURIComponent).join('/')}` : null,
+        thumbnailUrl: thumb ? `${base}/${thumb.name.split('/').map(encodeURIComponent).join('/')}` : null,
+    };
+}
+
 // Process the de-duplicated raw data into the MediaItem array
 export const MEDIA_PLAYLIST: MediaItem[] = Array.from(uniqueMedia.values()).map((item, index) => {
     const url = item[1];
-    // FIX: Assign title to a variable to be used for parsing the show name.
     const title = item[0];
-    let safeUrl = url;
-
-    try {
-        if (url.includes('archive.org')) {
-            const urlObject = new URL(url);
-            const pathParts = urlObject.pathname.split('/');
-            const lastPart = pathParts.pop() || '';
-            // Decode first to handle cases where it might be partially encoded already.
-            const decodedLastPart = decodeURIComponent(lastPart);
-            // Re-encode it safely.
-            const encodedLastPart = encodeURIComponent(decodedLastPart);
-            
-            // Reassemble the URL
-            urlObject.pathname = [...pathParts, encodedLastPart].join('/');
-            safeUrl = urlObject.toString();
-        }
-    } catch (e) {
-        console.warn(`Could not parse URL, using original: ${url}`, e);
-        safeUrl = url; // Fallback to original URL if parsing fails
-    }
+    const safeUrl = buildSafeArchiveUrl(url);
     
     return {
         id: `${item[1]}-${index}`, // Use original URL for a stable ID
@@ -409,8 +448,6 @@ export const MEDIA_PLAYLIST: MediaItem[] = Array.from(uniqueMedia.values()).map(
         src: safeUrl,
         type: item[2] as MediaItem['type'],
         genre: item[3],
-        // FIX: Populate the 'show' property using the parseShowName helper function.
-        // This enables dynamic tab generation for different TV shows in the UI.
         show: parseShowName(title),
     }
 });
